@@ -1,0 +1,46 @@
+module positions
+    use box_pot_parameters, only: np, sqtwodt, boxl, deltat
+    use ieee_arithmetic, only: ieee_is_nan
+    use cudafor
+    implicit none
+    private
+    public position
+
+    contains
+
+    attributes(global) subroutine position(x,y,z,fx,fy,fz,randv,pbc)
+        real, intent(in) :: fx(:), fy(:), fz(:)
+        real, intent(inout) :: randv(:)
+        real, intent(inout) :: x(:), y(:), z(:)
+        integer, intent(in), value :: pbc
+        ! Local variables
+        integer :: i,s,idx
+
+        idx = blockDim%x * (blockIdx%x - 1) + threadIdx%x
+        s = blockDim%x * gridDim%x
+
+        do i = idx,np,s
+            x(i) = x(i) + fx(i)*deltat + randv(i)
+            ! if ( ieee_is_nan(x(i)) ) then
+            !     print*, 'x NaN', fx(i), randv(i)
+            !     stop
+            ! end if
+            y(i) = y(i) + fy(i)*deltat + randv(i+np)
+            ! if ( ieee_is_nan(y(i)) ) then
+            !     print*, 'y NaN', fy(i), randv(i+np)
+            !     stop
+            ! end if
+            z(i) = z(i) + fz(i)*deltat + randv(i+(2*np))
+            ! if ( ieee_is_nan(z(i)) ) then
+            !     print*, 'z NaN', fz(i), randv(i+(2*np))
+            !     stop
+            ! end if
+
+            if ( pbc == 1 ) then
+                x(i) = x(i) - boxl*aint(x(i)/boxl)
+                y(i) = y(i) - boxl*aint(y(i)/boxl)
+                z(i) = z(i) - boxl*aint(z(i)/boxl)
+            end if
+        end do
+    end subroutine position
+end module

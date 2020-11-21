@@ -1,0 +1,6 @@
+*.o
+*.mod
+*.dat
+*.exe
+ksaxpy.cuf
+build/

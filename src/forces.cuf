@@ -1,0 +1,105 @@
+module forcec
+    use box_pot_parameters
+    use cudafor
+    implicit none
+
+    private
+    public force
+    
+    contains
+
+    attributes(global) subroutine force(x, y, z, fx, fy, fz, ener)
+    real, intent(in) :: x(:), y(:), z(:)
+    real, intent(inout) :: fx(:), fy(:), fz(:)
+    real(kind(0.0d0)), intent(inout) :: ener(:)
+
+    ! Local variables
+    integer :: i, j, s, idx, istat, tid, k
+    real :: xij,yij,zij,uij,fij,rchs
+    real :: rx, ry, rz
+    real(kind(0.0d0)) :: potential
+    real :: fxij,fyij,fzij,rij2,rij
+    real :: fxx,fyy,fzz
+    real, dimension(blksz), shared :: mye
+    
+    rchs = (dlr/dla)**(1.0/(dlr-dla))
+
+    ! Inicialización de variables de CUDA
+    ! idx = blockDim%x * ((blockIdx%x * 2) - 1) + threadIdx%x
+    ! s = blockDim%x * gridDim%x * 2
+    ! tid = threadIdx%x
+    ! mye(tid) = 0.0d0
+    i = blockDim%x *(blockIdx%x - 1) + threadIdx%x
+    s = blockDim%x * gridDim%x
+
+    do idx = i,np,s
+    ! do while (idx < np)
+        
+        potential = 0.0
+        fxx = 0.0
+        fyy = 0.0
+        fzz = 0.0
+
+        do j = 1, np
+            if ( idx == j ) cycle
+            xij = x(idx) - x(j)
+            yij = y(idx) - y(j)
+            zij = z(idx) - z(j)
+
+            xij = xij - boxl*aint( xij/boxl )
+            yij = yij - boxl*aint( yij/boxl )
+            zij = zij - boxl*aint( zij/boxl )
+            
+            rij = sqrt(xij*xij+yij*yij+zij*zij)
+            
+            if ( (rij > 0.9) .and. (rij < rc) ) then
+            ! if ( rij < rc ) then
+                if ( rij < rchs ) then
+                    ! print*, 'inside the if clause'
+                    ! print*, rij2
+                    uij = (a2/dT)*( (1.0/rij)**dlr-(1.0/rij)**dla )
+                    uij = uij + 1.0/dT
+                    fij = dlr*(1.0/rij)**(dlr+1.0)-dla*(1.0/rij)**(dla+1.0)
+                    fij = fij * a2 / dT
+                else
+                    uij = 0.0
+                    fij = 0.0
+                end if
+                fxij = fij*xij/rij
+                fyij = fij*yij/rij
+                fzij = fij*zij/rij
+
+                potential = potential + 0.5d0*uij
+                ! mye(tid) = mye(tid) + 0.5*uij
+
+                fxx = fxx + 0.5*fxij
+                fyy = fyy + 0.5*fyij
+                fzz = fzz + 0.5*fzij
+            end if
+        end do
+    
+    fx(idx) = fxx
+    fy(idx) = fyy
+    fz(idx) = fzz
+
+    ener(idx) = potential
+
+    ! k = blksz / 2 
+    ! do while ( k > 1 )
+    !     call syncthreads()
+    !     if ( tid < k ) then
+    !         mye(tid) = mye(tid) + mye(tid + k)
+    !     end if
+    ! k = k / 2
+    ! end do
+    ! if ( tid == 1 ) ener(blockIdx%x) = mye(1)
+
+    ! Actualizar el indice
+    ! idx = idx + s
+
+    end do
+
+    ! call syncthreads()
+
+    end subroutine force
+end module

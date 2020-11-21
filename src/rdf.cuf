@@ -1,0 +1,54 @@
+module rdf
+    use box_pot_parameters
+    implicit none
+    private
+    public rdf_cu
+    
+    contains
+    attributes(global) subroutine rdf_cu(x,y,z,g,dr)
+        real, intent(in), dimension(np) ::  x, y, z
+        real, intent(inout), dimension(mr) :: g
+        real, intent(in) :: dr
+        
+        integer :: i, s, j, nbin, idx, istat
+        real :: xij, yij, zij, rij2
+
+        ! Inicialización de variables de CUDA
+        i = blockDim%x * (blockIdx%x - 1) + threadIdx%x
+        s = blockDim%x * gridDim%x
+        tid = threadIdx%x
+        integer, dimension(256), shared :: temp
+
+        temp(tid) = 0.0
+        call syncthreads()
+
+        do idx = 1,np,s
+            do j = 1,np
+                
+                if ( idx == j ) cycle
+
+                xij = x(j)-x(i)
+                yij = y(j)-y(i)
+                zij = z(j)-z(i)
+
+                xij = xij-boxl*aint(xij/boxl)
+                yij = yij-boxl*aint(yij/boxl)
+                zij = zij-boxl*aint(zij/boxl)
+                
+                rij2 = xij*xij+yij*yij+zij*zij
+                rij2 = sqrt(rij2)
+                
+                if (rij < rc) then
+                    nbin = aint(rij/dr)+1
+                    if (nbin <= mr) then
+                        ! g(nbin) = g(nbin)+2.0
+                        istat = atomic_add(temp(idx), 2.0)
+                    end if
+                end if
+            end do
+
+            call syncthreads()
+            istat = atomic_add(gr(idx), temp(idx))
+        end do
+    end subroutine rdf_cu
+end module

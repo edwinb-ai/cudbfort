@@ -1,0 +1,29 @@
+module box_pot_parameters
+    implicit none
+    save
+! CONSTANT PARAMETERS
+    ! pot arguments
+    real, parameter :: dlr = 50.0, dT = 1.4737
+    real, parameter :: dla = 49.0, deltat = 0.000001
+    real, parameter :: a2 = (dlr/(dlr-dla))*(dlr/dla)**(dla/(dlr-dla))
+
+    ! parameters arguments
+    real, parameter :: phi = 0.35
+    real, parameter :: pi = 4.0*atan(1.0)
+    real, parameter :: rho = 6.0*phi/pi
+    real, parameter :: diam = 1.0
+    real, parameter :: sqtwodt = sqrt(2.0*deltat)
+
+    ! box arguments
+    integer, parameter :: np = 16**3! number of particles
+
+    real, parameter :: boxl = (real(np)/rho)**(1.0/3.0)
+    real, parameter :: rc = boxl / 2.0
+
+    ! mp and mr arguments
+    integer, parameter :: mr = 2**9
+    integer, parameter :: mt = 600000
+
+    ! CUDA parameters
+    integer, parameter :: blksz = 32
+end module box_pot_parameters
