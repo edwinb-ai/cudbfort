@@ -21,7 +21,7 @@ module box_pot_parameters
     real, parameter :: rc = boxl / 2.0
 
     ! mp and mr arguments
-    integer, parameter :: mr = 2**9
+    integer, parameter :: mr = 2**12
     integer, parameter :: mt = 600000
 
     ! CUDA parameters

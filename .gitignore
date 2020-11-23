@@ -2,5 +2,6 @@
 *.mod
 *.dat
 *.exe
+*.bk
 ksaxpy.cuf
 build/

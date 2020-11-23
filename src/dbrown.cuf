@@ -1,183 +1,192 @@
 program main
-    use box_pot_parameters
-    use cudafor
-    use curand
-    use forcec, only: force
-    use positions, only: position
-    use utils
+use box_pot_parameters
+use cudafor
+use curand
+use forcec, only: force
+use positions, only: position
+use utils
 
-    implicit none
+implicit none
+
+! Variables de CUDA
+type(dim3) :: grid, tBlock
+real, device :: x_d(np), y_d(np), z_d(np)
+real, device :: fx_d(np), fy_d(np), fz_d(np)
+real, dimension(3*np), device :: randv
+type(curandGenerator) :: gen
+integer :: istat, seed, threenp
+real(kind(0.0d0)), dimension(np), device :: enerpot_d
+integer :: nwords
+
+! Variables locales
+real, dimension(np) :: x,y,z,fx,fy,fz
+real, dimension(mr) :: r, g, h
+! real, allocatable :: cfx(:,:), cfy(:,:), cfz(:,:)
+real, parameter :: dr = rc/mr
+real, parameter :: d = (1.0/rho)**(1.0/3.0)
+integer :: i, istep, nprom, j, ncep, ncp, u
+real, dimension(np) :: ener
+real :: epotn, dv, fnorm
+real :: graux, hraux
+integer :: pbc = 1
+integer, parameter :: limT = 4000000
+
+! Inicia el programa imprimiendo algunos valores
+print*, 'The length of the box is: ', boxl
+print*, 'The mean interparticle distance is: ', d
+print*, 'Cut radius: ', rc
+
+
+! Leer de una configuración preexistente
+! open(newunit=u, file = 'finalconBD.dat', status = 'unknown')
+! do i = 1,np
+!     read(u,'(3f16.8)') x(i), y(i), z(i)
+! end do
+! close(u)
+
+! Generar una nueva configuración
+call iniconfig(x, y, z, d)
+! print*, 'Initial config'
+! print*, x(1:5), y(1:5), z(1:5)
+
+! allocate( cfx(mt,np),cfy(mt,np),cfz(mt,np) )
+
+! Mandar arreglos a GPU
+x_d = x
+y_d = y
+z_d = z
+fx_d = fx
+fy_d = fy
+fz_d = fz
+
+! Calcular variables para kernels
+nwords = blksz*(1 + (np/blksz))
+print*, nwords
+tBlock = dim3(blksz,1,1)
+grid = dim3(nwords/blksz,1,1)
+print*, grid%x
+call force<<<grid,tBlock>>>( x_d,y_d,z_d,fx_d,fy_d,fz_d,enerpot_d )
+istat = cudaDeviceSynchronize()
+
+!Energy of the initial configuration
+ener = enerpot_d
+print*, 'E/N = ', sum(ener)/np
+
+! Generar números aleatorios para mover las partículas
+istat = curandCreateGenerator( gen, CURAND_RNG_PSEUDO_DEFAULT )
+seed = 312343419
+istat = curandSetPseudoRandomGeneratorSeed( gen,seed )
+threenp = 3*np
+
+open(newunit=u, file = 'energy_BD.dat', status = 'unknown')
+
+do istep = 1, limT
+
+    istat = curandGenerateNormal( gen,randv,threenp,0.0,sqtwodt )       
     
-    ! Variables de CUDA
-    type(dim3) :: grid, tBlock
-    real, device :: x_d(np), y_d(np), z_d(np)
-    real, device :: fx_d(np), fy_d(np), fz_d(np)
-    real, dimension(3*np), device :: randv
-    type(curandGenerator) :: gen
-    integer :: istat, seed, threenp
-    real(kind(0.0d0)), dimension(np), device :: enerpot_d
-    integer :: nwords
+    call position<<<grid,tBlock>>>( x_d,y_d,z_d,fx_d,fy_d,fz_d,randv,pbc )
+    ! istat = cudaDeviceSynchronize()
+    ! print*, cudaGetErrorString(istat)
+    ! x = x_d
+    ! y = y_d
+    ! z = z_d
+    ! print*, istep
+    ! print*, 'x', x(1:5)
+    ! print*, 'y', y(1:5)
+    ! print*, 'z', z(1:5)
+    call force<<<grid,tBlock>>>( x_d,y_d,z_d,fx_d,fy_d,fz_d,enerpot_d )
+    ! fx = fx_d
+    ! fy = fy_d
+    ! fz = fz_d
+    ! print*, istep
+    ! print*, 'fx', fx(1:5)
+    ! print*, 'fy', fy(1:5)
+    ! print*, 'fz', fz(1:5)
+    
+    istat = cudaDeviceSynchronize()
+    ener = enerpot_d
+    epotn = sum(ener)/real(np)
+    if (mod(istep, 20000) == 0) then
+        print*, istep, epotn, 'Thermal'
+    end if
+    if (mod(istep, 1000) == 0) then 
+        write(u,'(3f16.8)') real(istep), epotn
+    end if
+enddo
+close(u)
 
-    ! Variables locales
-    real, dimension(np) :: x,y,z,fx,fy,fz
-    real, dimension(mr) :: r, g, h
-    ! real, allocatable :: cfx(:,:), cfy(:,:), cfz(:,:)
-    real, parameter :: dr = rc/mr
-    real, parameter :: d = (1.0/rho)**(1.0/3.0)
-    integer :: i, istep, nprom, j, ncep, ncp, u
-    real, dimension(np) :: ener
-    real :: epotn, dv, fnorm
-    real :: graux, hraux
-    integer :: pbc = 1
-    integer, parameter :: limT = 2000000
+print*, 'The system has thermalized'
 
-    ! Inicia el programa imprimiendo algunos valores
-    print*, 'The length of the box is: ', boxl
-    print*, 'The mean interparticle distance is: ', d
-    print*, 'Cut radius: ', rc
+! Regresar arreglos al CPU
+x = x_d
+y = y_d
+z = z_d
 
-    call iniconfig(x, y, z, d)
-    ! print*, 'Initial config'
-    ! print*, x(1:5), y(1:5), z(1:5)
+open(newunit=u, file = 'finalconBD.dat', status = 'unknown')
 
-    ! allocate( cfx(mt,np),cfy(mt,np),cfz(mt,np) )
+do i = 1,np
+    write(u,'(3f16.8)') x(i), y(i), z(i)
+enddo
+close(u)
 
-    ! Mandar arreglos a GPU
-    x_d = x
-    y_d = y
-    z_d = z
-    fx_d = fx
-    fy_d = fy
-    fz_d = fz
+g = 0.0
+h = 0.0
+r = 0.0
 
-    ! Calcular variables para kernels
-    nwords = blksz*(1 + (np/blksz))
-    print*, nwords
-    tBlock = dim3(blksz,1,1)
-    grid = dim3(nwords/blksz,1,1)
-    print*, grid%x
+ncep = 1000
+ncp = 1000000
+nprom = 0
+! pbc = 1
+
+do istep = 1, ncp
+    istat = curandGenerateNormal( gen,randv,threenp,0.0,sqtwodt )
+
+    call position<<<grid,tBlock>>>( x_d,y_d,z_d,fx_d,fy_d,fz_d,randv,pbc )
     call force<<<grid,tBlock>>>( x_d,y_d,z_d,fx_d,fy_d,fz_d,enerpot_d )
     istat = cudaDeviceSynchronize()
 
-    !Energy of the initial configuration
-    ener = enerpot_d
-    print*, 'E/N = ', sum(ener)/np
-
-    ! Generar números aleatorios para mover las partículas
-    istat = curandCreateGenerator( gen, CURAND_RNG_PSEUDO_DEFAULT )
-    seed = 312343419
-    istat = curandSetPseudoRandomGeneratorSeed( gen,seed )
-    threenp = 3*np
-
-    open(newunit=u, file = 'energy_BD.dat', status = 'unknown')
-    
-    do istep = 1, limT
-
-        istat = curandGenerateNormal( gen,randv,threenp,0.0,sqtwodt )       
-        
-        call position<<<grid,tBlock>>>( x_d,y_d,z_d,fx_d,fy_d,fz_d,randv,pbc )
-        ! istat = cudaDeviceSynchronize()
-        ! print*, cudaGetErrorString(istat)
-        ! x = x_d
-        ! y = y_d
-        ! z = z_d
-        ! print*, istep
-        ! print*, 'x', x(1:5)
-        ! print*, 'y', y(1:5)
-        ! print*, 'z', z(1:5)
-        call force<<<grid,tBlock>>>( x_d,y_d,z_d,fx_d,fy_d,fz_d,enerpot_d )
-        ! fx = fx_d
-        ! fy = fy_d
-        ! fz = fz_d
-        ! print*, istep
-        ! print*, 'fx', fx(1:5)
-        ! print*, 'fy', fy(1:5)
-        ! print*, 'fz', fz(1:5)
-        
-        istat = cudaDeviceSynchronize()
+    if ( mod(istep, 200000) == 0 ) then
         ener = enerpot_d
-        epotn = sum(ener)/real(np)
-        if (mod(istep, 20000) == 0) then
-            print*, istep, epotn, 'Thermal'
-        end if
-        if (mod(istep, 1000) == 0) then 
-            write(u,'(3f16.8)') real(istep), epotn
-        end if
-    enddo
-    close(u)
+        epotn = sum(ener) / real(np)
+        print*, istep, epotn, 'Average'
+    end if
+    if ( mod(istep, ncep) == 0 ) then
+        nprom = nprom + 1
+        x = x_d
+        y = y_d
+        z = z_d
+        ! t(nprom) = deltat*ncep*(nprom-1)
+        ! do j = 1, np
+            ! cfx(nprom, j) = x(j)
+            ! cfy(nprom, j) = y(j)
+            ! cfz(nprom, j) = z(j)
+        ! end do
+        call gr( x,y,z,g,dr )
+    end if
+end do
 
-    print*, 'The system has thermalized'
+open(newunit=u,file='gr_BD.dat',status='unknown')
 
-    ! Regresar arreglos al CPU
-    x = x_d
-    y = y_d
-    z = z_d
+write(u,'(3f16.8)') r(1), g(1)
 
-    open(newunit=u, file = 'finalconBD.dat', status = 'unknown')
+do i = 2,mr
+    r(i)=(i-1)*dr
+    dv=4.0*pi*r(i)**2.0*dr
+    fnorm=boxl**3.0/( np**2.0 * nprom*dv )
+    graux=g(i)*fnorm
+    hraux=graux-1.0
+    g(i)=graux
+    h(i)=hraux
+    write(u,'(3f16.8)')r(i),graux,hraux
+enddo
+close(u)
 
-    do i = 1,np
-        write(u,'(3f16.8)') x(i), y(i), z(i)
-    enddo
-    close(u)
+! print*, "Saving MSD to files..."
+! call save_timeseries( 'msd_data/msd_',cfx,cfy,cfz )
+! print*, "Done!"
 
-    g = 0.0
-    h = 0.0
-    r = 0.0
-
-    ncep = 100
-    ncp = 2000000
-    nprom = 0
-    pbc = 1
-
-    do istep = 1, ncp
-        istat = curandGenerateNormal( gen,randv,threenp,0.0,sqtwodt )
-
-        call position<<<grid,tBlock>>>( x_d,y_d,z_d,fx_d,fy_d,fz_d,randv,pbc )
-        call force<<<grid,tBlock>>>( x_d,y_d,z_d,fx_d,fy_d,fz_d,enerpot_d )
-        ! istat = cudaDeviceSynchronize()
-
-        if ( mod(istep, 200000) == 0 ) then
-            ener = enerpot_d
-            epotn = sum(ener) / real(np)
-            print*, istep, epotn, 'Average'
-        end if
-        if ( mod(istep, ncep) == 0 ) then
-            nprom = nprom + 1
-            x = x_d
-            y = y_d
-            z = z_d
-            ! t(nprom) = deltat*ncep*(nprom-1)
-            ! do j = 1, np
-                ! cfx(nprom, j) = x(j)
-                ! cfy(nprom, j) = y(j)
-                ! cfz(nprom, j) = z(j)
-            ! end do
-            call gr( x,y,z,g,dr )
-        end if
-    end do
-
-    open(newunit=u,file='gr_BD.dat',status='unknown')
-
-    write(u,'(3f16.8)') r(1), g(1)
-
-    do i = 2,mr
-        r(i)=(i-1)*dr
-        dv=4.0*pi*r(i)**2.0*dr
-        fnorm=boxl**3.0/( np**2.0 * nprom*dv )
-        graux=g(i)*fnorm
-        hraux=graux-1.0
-        g(i)=graux
-        h(i)=hraux
-        write(u,'(3f16.8)')r(i),graux,hraux
-    enddo
-    close(u)
-
-    ! print*, "Saving MSD to files..."
-    ! call save_timeseries( 'msd_data/msd_',cfx,cfy,cfz )
-    ! print*, "Done!"
-
-    ! Desalojar toda la memoria utilizada
-    ! deallocate( cfx,cfy,cfz )
+! Desalojar toda la memoria utilizada
+! deallocate( cfx,cfy,cfz )
 
 end program main
 
@@ -208,18 +217,18 @@ attributes(host) subroutine gr(x,y,z,g,dr)
             yij = yij-boxl*aint(yij/boxl)
             zij = zij-boxl*aint(zij/boxl)
             
-            rij2 = xij*xij+yij*yij+zij*zij
-            rij2 = sqrt(rij2)
+            ! rij2 = xij*xij+yij*yij+zij*zij
+            rij2 = norm2( [xij,yij,zij] )
 
             if ( rij2 < rc ) then
             ! if ( rij2 < rc ) then
-                nbin = aint(rij2/dr) + 1
+                nbin = aint(rij2 / dr) + 1
                 ! print*, nbin, mr
                 if (nbin <= mr) then
                     g(nbin) = g(nbin) + 2.0
                     ! print*, g(nbin)
-                endif
-            endif
-        enddo
-    enddo
+                end if
+            end if
+        end do
+    end do
 end subroutine gr
